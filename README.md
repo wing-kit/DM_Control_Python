@@ -29,6 +29,7 @@ This library supports **macOS**, **Linux**, and **Windows** platforms.
    - [Saving Parameters](#62-saving-parameters)
    - [Reading Internal Registers](#63-reading-internal-registers)
    - [Writing Internal Registers](#64-writing-internal-registers)
+7. [Native CAN (SocketCAN) on Linux](#7-native-can-socketcan-on-linux)
 
 ---
 
@@ -60,6 +61,8 @@ Motor3 = Motor(DM_Motor_Type.DM4310, 0x03, 0x13)
 * **First Parameter**: Motor type
 * **Second Parameter**: Slave ID (Motor's CAN ID)
 * **Third Parameter**: Master ID (Host ID; must be unique and not `0x00`)
+
+Supported motor types (`DM_Motor_Type`): `DM4310`, `DM4310_48V`, `DM4340`, `DM4340_48V`, `DM6006`, `DM8006`, `DM8009`, `DM10010L`, `DM10010`, `DMH3510`, `DMH6215`, `DMG6220`, `DM10422P`.
 
 Set up the serial device (example for Windows):
 
@@ -298,3 +301,48 @@ Note: Changes will be lost after power cycle unless saved to flash memory.
 | 55                         | dir       | Direction                   | RO   |                 | float     |
 | 80                         | p_m       | Motor Position              | RO   |                 | float     |
 | 81                         | xout      | Output Shaft Position       | RO   |                 | float     |
+
+---
+
+## 7. Native CAN (SocketCAN) on Linux
+
+If your Linux machine has a native CAN interface (e.g. an on-board CAN controller or a
+SocketCAN-compatible adapter), you can talk to the motors **directly over CAN** without
+the USB-to-CAN serial adapter. Use `DM_CAN_SocketCAN.py`, which provides
+`MotorControlSocketCAN` — a drop-in replacement for `MotorControl` with the same API.
+
+### Bring up the CAN interface
+
+DaMiao motors default to **1 Mbps**:
+
+```bash
+sudo ip link set can0 up type can bitrate 1000000 restart-ms 100
+sudo ip link set can0 txqueuelen 1000
+```
+
+### Usage
+
+```python
+from DM_CAN import Motor, DM_Motor_Type, Control_Type
+from DM_CAN_SocketCAN import MotorControlSocketCAN
+
+control = MotorControlSocketCAN("can0")
+
+motor = Motor(DM_Motor_Type.DM10422P, SlaveID=0x01, MasterID=0x00)
+control.addMotor(motor)
+
+control.enable(motor)
+
+# Position-velocity mode (default CTRL_MODE on many motors)
+control.control_Pos_Vel(motor, P_desired=1.0, V_desired=2.0)
+print(motor.getPosition(), motor.getVelocity(), motor.getTorque())
+
+control.disable(motor)
+control.close()
+```
+
+All commands from the serial version (`controlMIT`, `control_Vel`, `control_pos_force`,
+`enable`, `disable`, `set_zero_position`, `read_motor_param`, `change_motor_param`,
+`switchControlMode`, `save_motor_param`, `refresh_motor_status`, ...) work identically.
+
+No extra Python dependencies are required — it uses Linux's built-in `AF_CAN` raw sockets.
