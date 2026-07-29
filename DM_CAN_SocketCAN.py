@@ -23,6 +23,7 @@ Requires the CAN interface to be up, e.g.:
 import select
 import socket
 import struct
+import sys
 from time import sleep
 
 import numpy as np
@@ -55,17 +56,19 @@ class MotorControlSocketCAN:
                    # H3510            DMG62150      DMH6220         DM10422P
                    [12.5, 280, 1], [12.5, 45, 10], [12.5, 45, 10], [12.566, 20, 500]]
 
-    def __init__(self, channel: str = "can0"):
+    def __init__(self, channel: str = "can0", dry_run: bool = False):
         """
         define MotorControl object 定义电机控制对象
         :param channel: SocketCAN interface name, e.g. "can0"
+        :param dry_run: if True, do not send frames; print them to stderr instead
         """
         self.channel = channel
+        self.dry_run = dry_run
         self.motors_map = dict()
         self.sock = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
         self.sock.bind((channel,))
         self.sock.setblocking(False)
-        print(f"SocketCAN interface {channel} is open")
+        print(f"SocketCAN interface {channel} is open", file=sys.stderr)
 
     def close(self):
         self.sock.close()
@@ -80,6 +83,9 @@ class MotorControlSocketCAN:
         :param data: up to 8 bytes
         """
         data = bytes(bytearray(data))
+        if self.dry_run:
+            print(f"[dry-run] CAN TX id=0x{can_id & 0x7FF:03X} data={data.hex()}", file=sys.stderr)
+            return
         frame = struct.pack(CAN_FRAME_FMT, can_id & 0x7FF, len(data), data.ljust(8, b"\x00"))
         self.sock.send(frame)
 

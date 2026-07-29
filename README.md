@@ -346,3 +346,37 @@ All commands from the serial version (`controlMIT`, `control_Vel`, `control_pos_
 `switchControlMode`, `save_motor_param`, `refresh_motor_status`, ...) work identically.
 
 No extra Python dependencies are required — it uses Linux's built-in `AF_CAN` raw sockets.
+
+### Command-line tool: `dm_motor.py`
+
+One-shot, non-interactive CLI on top of the SocketCAN backend — convenient for
+scripts and coding agents. Every command supports `--json` output and
+`--dry-run` (prints the CAN frames instead of sending them).
+
+```bash
+# read-only
+./dm_motor.py scan                          # find motors on the bus
+./dm_motor.py status --json                 # {"position_rad": ..., ...}
+./dm_motor.py monitor --rate 50 --count 10  # stream feedback
+./dm_motor.py read-param PMAX VMAX TMAX     # read registers by name or RID
+
+# write / motion commands (test them first with --dry-run!)
+./dm_motor.py --dry-run enable              # shows frame, sends nothing
+./dm_motor.py enable
+./dm_motor.py pos-vel 1.0 2.0               # MOTION: position 1 rad at 2 rad/s
+./dm_motor.py mit --kp 5 --kd 0.1 --q 0     # MOTION: MIT mode command
+./dm_motor.py disable
+
+# zero calibration: disable, move shaft by hand to desired zero, then
+./dm_motor.py set-zero                      # persists in motor flash
+./dm_motor.py status                        # should read ~0 rad
+```
+
+Global options (work before or after the subcommand):
+`--channel can0 --type DM10422P --slave-id 1 --master-id 0 --json --dry-run`
+
+Run `./dm_motor.py --help` or `./dm_motor.py <command> --help` for details.
+
+An [Agent Skills](https://agentskills.io) package for coding agents (safety rules,
+command reference, common workflows) is included at
+[`.agents/skills/dm-motor/SKILL.md`](.agents/skills/dm-motor/SKILL.md).
