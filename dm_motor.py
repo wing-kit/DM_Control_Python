@@ -254,6 +254,37 @@ def cmd_mit(args):
     control.close()
 
 
+def cmd_mit_stream(args):
+    """continuously stream MIT commands; motor must be in MIT mode and enabled"""
+    import math
+    control = make_control(args)
+    motor = make_motor(args)
+    control.addMotor(motor)
+    interval = 1.0 / args.rate
+    t0 = time.monotonic()
+    try:
+        while True:
+            t = time.monotonic() - t0
+            if args.amp:
+                q = args.q + args.amp * math.sin(2 * math.pi * args.freq * t)
+                dq = args.dq + args.amp * 2 * math.pi * args.freq * math.cos(2 * math.pi * args.freq * t)
+            else:
+                q, dq = args.q, args.dq
+            control.controlMIT(motor, kp=args.kp, kd=args.kd, q=q, dq=dq, tau=args.tau)
+            if args.duration and t >= args.duration:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        pass
+    # final state readout
+    st = motor_state(motor)
+    st["streamed_s"] = round(time.monotonic() - t0, 3)
+    out(st, args.json)
+    if not args.dry_run:
+        print("stream stopped; motor still enabled — run 'disable' to release it", file=sys.stderr)
+    control.close()
+
+
 def cmd_pos_vel(args):
     control = make_control(args)
     motor = make_motor(args)
@@ -358,6 +389,19 @@ def build_parser():
     sp.add_argument("--dq", type=float, default=0.0, help="target velocity rad/s")
     sp.add_argument("--tau", type=float, default=0.0, help="feedforward torque N*m")
     sp.set_defaults(func=cmd_mit)
+
+    sp = sub.add_parser("mit-stream", parents=[common],
+                        help="stream MIT commands continuously (MOTION! motor must be in MIT mode and enabled)")
+    sp.add_argument("--kp", type=float, default=10.0)
+    sp.add_argument("--kd", type=float, default=0.5)
+    sp.add_argument("--q", type=float, default=0.0, help="center position rad")
+    sp.add_argument("--dq", type=float, default=0.0, help="target velocity rad/s")
+    sp.add_argument("--tau", type=float, default=0.0, help="feedforward torque N*m")
+    sp.add_argument("--amp", type=float, default=0.0, help="sine amplitude rad (0 = hold position)")
+    sp.add_argument("--freq", type=float, default=0.5, help="sine frequency Hz")
+    sp.add_argument("--rate", type=float, default=200.0, help="command rate Hz (default 200)")
+    sp.add_argument("--duration", type=float, default=0, help="seconds, 0 = until Ctrl-C")
+    sp.set_defaults(func=cmd_mit_stream)
 
     sp = sub.add_parser("pos-vel", parents=[common], help="one position-velocity command (MOTION!)")
     sp.add_argument("position", type=float, help="rad")

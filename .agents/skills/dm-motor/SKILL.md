@@ -65,7 +65,13 @@ can_br p_m xout` (full list: `DM_variable` enum in `DM_CAN.py`).
 .venv/bin/python dm_motor.py pos-vel 0 1.0       # POS_VEL mode: go to 0 rad at 1 rad/s
 .venv/bin/python dm_motor.py vel 0.5             # VEL mode: spin at 0.5 rad/s
 .venv/bin/python dm_motor.py mit --kp 5 --kd 0.1 --q 0   # MIT mode: one command frame
+.venv/bin/python dm_motor.py mit-stream --kp 10 --kd 0.5 --q 0   # MIT: hold position (streams at --rate Hz)
+.venv/bin/python dm_motor.py mit-stream --amp 0.3 --freq 0.5 --duration 5  # MIT: sine sweep
 ```
+
+MIT mode needs a continuous command stream — a single `mit` frame has no lasting
+effect. Use `mit-stream` for anything real. MIT commands only work when
+`CTRL_MODE=1` (switch with `mode MIT` + `save-params`).
 
 Note: motion commands must match the motor's `CTRL_MODE` (check with
 `read-param CTRL_MODE`: 1=MIT, 2=POS_VEL, 3=VEL, 4=Torque_Pos). Change with
@@ -113,4 +119,33 @@ read_motor_param/change_motor_param/switchControlMode/save_motor_param/
 set_zero_position/refresh_motor_status`). Use it when a task needs tight
 control loops (e.g. 100+ Hz MIT control) that one-shot CLI calls can't do.
 
+**Protocol limits (critical):** the MIT frame encodes kp as 0-500 and kd as
+0-5 in 12-bit fields. Values outside range corrupt the frame (fixed in
+`float_to_uint`, but never rely on unclamped user input). Motors here have
+large stiction (~5 N·m measured); weak kp (<10) may not move the arm at all.
+
 See `README.md` section 7 for details and examples.
+
+## Pendulum control (gravity-compensated MIT)
+
+Two scripts implement a safe pendulum workflow (zero at 12 o'clock):
+
+1. **Always calibrate first in POSITION mode** — never sweep-fit under MIT
+   with guessed gains:
+   ```bash
+   .venv/bin/python dm_motor.py mode POS_VEL && .venv/bin/python dm_motor.py save-params
+   .venv/bin/python pendulum_calibrate.py     # prints G, B, R², friction fc
+   ```
+2. **Then run MIT control with the measured values** (skips the risky sweep):
+   ```bash
+   .venv/bin/python dm_motor.py mode MIT && .venv/bin/python dm_motor.py save-params
+   .venv/bin/python pendulum_control.py --gravity <G> --gravity-offset <B> \
+       --kp 30 --kd 2.5 --ki 10 --i-max 12 --fc 3.0 --push-amp 0.3
+   ```
+
+Behavior notes for this joint: large coulomb friction (~5 N·m) causes a
+two-phase push return (fast spring-back, then slow integral creep) — that is
+normal; `--fc` friction feedforward and higher `--ki` speed it up. Over-
+compensating `--fc` (>= real fc) causes buzzing around the target.
+`pendulum_control.py` parks the arm at the bottom before disabling — do not
+kill it with SIGKILL; use Ctrl-C and let it park.

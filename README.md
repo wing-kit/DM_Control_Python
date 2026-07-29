@@ -365,6 +365,8 @@ scripts and coding agents. Every command supports `--json` output and
 ./dm_motor.py enable
 ./dm_motor.py pos-vel 1.0 2.0               # MOTION: position 1 rad at 2 rad/s
 ./dm_motor.py mit --kp 5 --kd 0.1 --q 0     # MOTION: MIT mode command
+./dm_motor.py mit-stream --kp 10 --kd 0.5 --q 0        # MOTION: hold position at 200 Hz
+./dm_motor.py mit-stream --amp 0.3 --freq 0.5 --duration 5   # MOTION: sine sweep
 ./dm_motor.py disable
 
 # zero calibration: disable, move shaft by hand to desired zero, then
@@ -380,3 +382,48 @@ Run `./dm_motor.py --help` or `./dm_motor.py <command> --help` for details.
 An [Agent Skills](https://agentskills.io) package for coding agents (safety rules,
 command reference, common workflows) is included at
 [`.agents/skills/dm-motor/SKILL.md`](.agents/skills/dm-motor/SKILL.md).
+
+### Pendulum example: `pendulum_calibrate.py` + `pendulum_control.py`
+
+A complete, safety-hardened example of gravity-compensated MIT control for a
+pendulum arm (zero at 12 o'clock, target 3 o'clock = +pi/2).
+
+**Step 1 — safe calibration in POSITION mode** (`pendulum_calibrate.py`):
+the motor's own position servo slowly visits known clock angles (45 deg steps,
+every leg small), holds still, and measures the holding torque. A fit of
+`tau = G*sin(q) + B` over the samples gives the gravity feedforward, and
+repeated angles from opposite directions reveal friction hysteresis. No MIT
+gains are involved, so there is nothing to guess.
+
+```bash
+./dm_motor.py mode POS_VEL && ./dm_motor.py save-params
+./pendulum_calibrate.py        # ~80 s of slow motion; prints G, B, R^2, fc
+```
+
+**Step 2 — MIT control with the measured gravity** (`pendulum_control.py`):
+
+```bash
+./dm_motor.py mode MIT && ./dm_motor.py save-params
+./pendulum_control.py --gravity <G> --gravity-offset <B> \
+    --kp 30 --kd 2.5 --ki 10 --i-max 12 --fc 3.0 --push-amp 0.3
+```
+
+Features:
+
+- cosine-ramp moves, gravity feedforward `G*sin(q)+B`, integral term with
+  anti-windup, smooth coulomb friction feedforward `--fc` (breaks stiction
+  without waiting for the integral)
+- optional stage-1 MIT sweep fit (skipped with `--gravity`); refuses to use a
+  fit when the arm didn't actually move (span check) or the fit is implausible
+  (`R^2 < 0.5` or `|G| > 100`), so a bad regression can never become a command
+- stage-2 push-recovery tuning: small reference steps, auto-adjusts kd until
+  the return is fast with < 5% overshoot
+- hard clamps on every outgoing MIT value: `kp <= 500`, `kd <= 5`,
+  `|tau| <= --tau-max`
+- on Ctrl-C or abort it parks the arm at the bottom (6 o'clock) before
+  disabling, so the pendulum never drops
+
+**Protocol note (learned the hard way):** the DaMiao MIT frame encodes `kd` in
+12 bits over the range 0-5. Sending `kd > 5` overflows the field and corrupts
+the other gains in the same frame. `float_to_uint()` in `DM_CAN.py` now clamps
+correctly, and `pendulum_control.py` clamps again on top.
